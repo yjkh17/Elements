@@ -8,6 +8,7 @@ struct ClothView: View {
     @State private var showUI = true
     @State private var hideTimer: Timer?
     @State private var lastDragLocation: CGPoint = .zero
+    @State private var baseCameraDistance: Float = 1.3  // Match engine's initial cameraDistance
     
     var body: some View {
         GeometryReader { geometry in
@@ -65,6 +66,23 @@ struct ClothView: View {
                                 withAnimation(.easeInOut(duration: 0.3)) {
                                     showUI = true
                                 }
+                            }
+                    )
+                    .simultaneousGesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                // Adjust camera distance based on pinch scale
+                                // Pinch out (value > 1) = zoom in = decrease distance
+                                // Pinch in (value < 1) = zoom out = increase distance
+                                let scale = Float(value)
+                                let newDistance = baseCameraDistance / scale
+                                
+                                // Clamp to reasonable zoom range
+                                engine.cameraDistance = max(0.5, min(5.0, newDistance))
+                            }
+                            .onEnded { _ in
+                                // Store the current distance as the new base
+                                baseCameraDistance = engine.cameraDistance
                             }
                     )
                 
