@@ -14,8 +14,21 @@ struct ClothView: View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
                 // Metal view for simulation
+                // Metal view for simulation
                 ClothMetalView(engine: engine)
                     .ignoresSafeArea()
+                    #if os(iOS)
+                    .overlay(
+                        MultiTouchControlView(engine: engine) {
+                            resetHideTimer()
+                            if showUI {
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showUI = false
+                                }
+                            }
+                        }
+                    )
+                    #else
                     .highPriorityGesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
@@ -61,28 +74,23 @@ struct ClothView: View {
                             }
                     )
                     .simultaneousGesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                let scale = Float(value)
+                                let newDistance = baseCameraDistance / scale
+                                engine.cameraDistance = max(0.5, min(5.0, newDistance))
+                            }
+                            .onEnded { _ in
+                                baseCameraDistance = engine.cameraDistance
+                            }
+                    )
+                    #endif
+                    .simultaneousGesture(
                         TapGesture(count: 2)
                             .onEnded {
                                 withAnimation(.easeInOut(duration: 0.3)) {
                                     showUI = true
                                 }
-                            }
-                    )
-                    .simultaneousGesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                // Adjust camera distance based on pinch scale
-                                // Pinch out (value > 1) = zoom in = decrease distance
-                                // Pinch in (value < 1) = zoom out = increase distance
-                                let scale = Float(value)
-                                let newDistance = baseCameraDistance / scale
-                                
-                                // Clamp to reasonable zoom range
-                                engine.cameraDistance = max(0.5, min(5.0, newDistance))
-                            }
-                            .onEnded { _ in
-                                // Store the current distance as the new base
-                                baseCameraDistance = engine.cameraDistance
                             }
                     )
                 

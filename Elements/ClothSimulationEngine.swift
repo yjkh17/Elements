@@ -93,13 +93,19 @@ class ClothSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
     var spacing: Float = 0.04
     var numSubsteps: UInt32 = 40 // Higher substeps = less stretching, more stiffness
     
-    // Interaction (matching HTML reference grabber)
-    var grabbedParticleIndex: Int = -1
-    var grabInvMass: Float = 0  // Store original invMass when grabbing
-    var dragPosition: SIMD3<Float> = .zero
-    var prevDragPosition: SIMD3<Float> = .zero
-    var interactionPlaneZ: Float = 0
-    var grabTime: Float = 0
+    // Interaction (Multi-Touch)
+    struct GrabInfo {
+        var particleIndex: Int
+        var originalInvMass: Float
+        var interactionPlaneZ: Float
+        var grabTime: Float // For smoothness
+    }
+    
+    // Map TouchID (UUID or UITouch hash) to GrabInfo
+    var activeTouches: [Int: GrabInfo] = [:]
+    
+    // Kept for backward compatibility/single mouse dragging if needed, 
+    // but primary logic will use activeTouches.
     var viewSize: CGSize = .zero
     
     // Orbit Camera
@@ -214,6 +220,7 @@ class ClothSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
 
     func resetSimulation() {
         print("DEBUG: Reset Simulation Called")
+        activeTouches.removeAll() // Clear all grabs
         particles.removeAll()
         indices.removeAll()
         structuralConstraints.removeAll()
@@ -752,17 +759,21 @@ class ClothSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         // If we modify 'particles' now and upload, we preserve the simulation state.
     }
     
-    func updateGrabbedParticleGPUOnly() {
-        guard let buffer = particleBuffer, grabbedParticleIndex >= 0 else { return }
+    func updateActiveTouchesGPU() {
+        guard let buffer = particleBuffer else { return }
         
-        let offset = grabbedParticleIndex * MemoryLayout<ClothParticle>.stride
-        let ptr = buffer.contents().advanced(by: offset).bindMemory(to: ClothParticle.self, capacity: 1)
-        ptr[0] = particles[grabbedParticleIndex]
+        for info in activeTouches.values {
+            let offset = info.particleIndex * MemoryLayout<ClothParticle>.stride
+            let ptr = buffer.contents().advanced(by: offset).bindMemory(to: ClothParticle.self, capacity: 1)
+            ptr[0] = particles[info.particleIndex]
+        }
     }
     
-    func startGrab(at screenPoint: CGPoint, viewSize: CGSize) {
-        // Sync CPU state with GPU simulation before interaction
-        syncParticlesFromGPU()
+    func startGrab(at screenPoint: CGPoint, viewSize: CGSize, touchID: Int = 0) {
+        // Sync CPU state (only if no other touches are active to avoid overwriting)
+        if activeTouches.isEmpty {
+            syncParticlesFromGPU()
+        }
         
         self.viewSize = viewSize
         let (rayOrigin, rayDir) = screenToWorldRay(screenPoint: screenPoint, viewSize: viewSize)
@@ -772,81 +783,71 @@ class ClothSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         var closestIdx = -1
         
         for i in 0..<particles.count {
+            // Skip already grabbed particles
+            if activeTouches.values.contains(where: { $0.particleIndex == i }) { continue }
+            
             let p = particles[i].position
-            // Distance from point to ray
             let toPoint = p - rayOrigin
             let t = dot(toPoint, rayDir)
-            if t < 0 { continue } // Behind camera
+            if t < 0 { continue }
             
             let closestOnRay = rayOrigin + rayDir * t
             let dist = length(p - closestOnRay)
             
-            if dist < minDist && dist < 0.1 { // Increased threshold for reliable iOS touch
+            if dist < minDist && dist < 0.15 { // Increased threshold
                 minDist = dist
                 closestIdx = i
             }
         }
         
         if closestIdx >= 0 {
-            grabbedParticleIndex = closestIdx
-            grabInvMass = particles[closestIdx].invMass
-            print("DEBUG: startGrab Idx: \(closestIdx), Captured invMass: \(grabInvMass)")
+            print("DEBUG: startGrab ID: \(touchID) Idx: \(closestIdx)")
             
-            // Unpause if paused
-            if isPaused {
-                isPaused = false
-            }
+            if isPaused { isPaused = false }
             
-            particles[closestIdx].invMass = 0 // Pin the particle
+            let originalInvMass = particles[closestIdx].invMass
+            particles[closestIdx].invMass = 0 // Pin
             
-            // Calculate distance
             let p = particles[closestIdx].position
-            interactionPlaneZ = dot(p - rayOrigin, rayDir)
+            let planeZ = dot(p - rayOrigin, rayDir)
             
-            dragPosition = p
-            prevDragPosition = p
-            grabTime = 0
+            let info = GrabInfo(
+                particleIndex: closestIdx,
+                originalInvMass: originalInvMass,
+                interactionPlaneZ: planeZ,
+                grabTime: 0
+            )
+            activeTouches[touchID] = info
             
-            // Update ONLY valid particle
-            updateGrabbedParticleGPUOnly()
+            updateActiveTouchesGPU()
         }
     }
     
-    func moveGrab(to screenPoint: CGPoint) {
-        guard grabbedParticleIndex >= 0 else { return }
+    func moveGrab(to screenPoint: CGPoint, touchID: Int = 0) {
+        guard let info = activeTouches[touchID] else { return }
         
-        let (rayOrigin, rayDir) = screenToWorldRay(screenPoint: screenPoint, viewSize: viewSize)
+        let (rayOrigin, rayDir) = screenToWorldRay(screenPoint: screenPoint, viewSize: self.viewSize)
+        let newPos = rayOrigin + rayDir * info.interactionPlaneZ
         
-        // Move along the same distance from camera
-        let newPos = rayOrigin + rayDir * interactionPlaneZ
-        
-        // Calculate velocity for momentum on release
+        // Update velocity for momentum
         let dt: Float = 1.0/60.0
-        let velocity = (newPos - dragPosition) / dt
+        let velocity = (newPos - particles[info.particleIndex].position) / dt
+        particles[info.particleIndex].velocity = velocity
+        particles[info.particleIndex].position = newPos
+        particles[info.particleIndex].invMass = 0 // Keep pinned
         
-        prevDragPosition = dragPosition
-        dragPosition = newPos
-        
-        particles[grabbedParticleIndex].position = newPos
-        particles[grabbedParticleIndex].velocity = velocity // Apply momentum immediately
-        
-        // Update ONLY valid particle
-        updateGrabbedParticleGPUOnly()
+        updateActiveTouchesGPU()
     }
     
-    func endGrab() {
-        guard grabbedParticleIndex >= 0 else { return }
-        print("DEBUG: endGrab Idx: \(grabbedParticleIndex), Restoring invMass: \(grabInvMass)")
+    func endGrab(touchID: Int = 0) {
+        guard let info = activeTouches[touchID] else { return }
         
-        // Restore original mass
-        particles[grabbedParticleIndex].invMass = grabInvMass
+        // Restore mass
+        particles[info.particleIndex].invMass = info.originalInvMass
+        updateActiveTouchesGPU()
         
-        // Velocity was already updated in moveGrab, so it carries over momentum.
-        
-        // Update GPU to restore mass
-        updateGrabbedParticleGPUOnly()
-        
-        grabbedParticleIndex = -1
+        activeTouches[touchID] = nil
+        print("DEBUG: endGrab ID: \(touchID)")
     }
     
     func updateParticleBuffer() {
