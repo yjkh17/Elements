@@ -69,6 +69,8 @@ struct Uniforms {
     float sssIntensity;
     int showObstacle;
     float expansionFactor;
+    int renderMode;
+    float pixelSize; // NEW: Dynamic pixel size
     float time;
 };
 
@@ -939,4 +941,49 @@ fragment float4 liquidFragment(
     float3 finalColor = mix(tintedBackground, finalFluidColor, alpha) + edgeGlow;
     
     return float4(finalColor, surfaceAlpha);
+}
+
+// --- PIXELS VIEW SHADER ---
+fragment float4 pixelFragment(
+    LiquidVertexOut in [[stage_in]],
+    device GridCell* grid [[buffer(0)]],
+    constant Uniforms& uniforms [[buffer(1)]]
+) {
+    // 1. Quantize UV into Simulation Grid Pixels (Dynamic Size)
+    float2 gridRes = float2(uniforms.gridRes) * (1.0 / uniforms.pixelSize); 
+    float2 pixelUV = floor(in.uv * gridRes) / gridRes;
+    float2 centerUV = (floor(in.uv * gridRes) + 0.5) / gridRes;
+    
+    // 2. Fetch Density at block center
+    float h_val = uniforms.spacing;
+    float2 sPos = float2(centerUV.x * uniforms.domainSize.x, (1.0 - centerUV.y) * uniforms.domainSize.y);
+    int2 coord = int2(floor(sPos / h_val));
+    
+    float density = 0;
+    if (coord.x >= 0 && (uint)coord.x < uniforms.gridRes.x && coord.y >= 0 && (uint)coord.y < uniforms.gridRes.y) {
+        density = grid[coord.x * uniforms.gridRes.y + coord.y].density;
+    }
+    
+    float threshold = 0.25f / uniforms.expansionFactor;
+    if (density < threshold) discard_fragment();
+    
+    // 3. Stylized Retro Color
+    // Map density to a vibrant blue/cyan range
+    float d = saturate((density - threshold) * 0.5);
+    float3 baseColor = mix(float3(0.0, 0.4, 1.0), float3(0.0, 1.0, 0.8), d);
+    
+    // 4. Pixel Border Effect (Grid look)
+    float2 localCoord = fract(in.uv * gridRes);
+    float border = 0.1;
+    float mask = step(border, localCoord.x) * step(border, localCoord.y) * 
+                 step(localCoord.x, 1.0 - border) * step(localCoord.y, 1.0 - border);
+    
+    // Darken the border for a nice LCD/CRT grid look
+    float3 finalColor = mix(baseColor * 0.2, baseColor, mask);
+    
+    // Add a subtle "glow" based on time
+    float pulse = sin(uniforms.time * 2.0 + (pixelUV.x + pixelUV.y) * 10.0) * 0.1 + 0.9;
+    finalColor *= pulse;
+    
+    return float4(finalColor, 1.0);
 }

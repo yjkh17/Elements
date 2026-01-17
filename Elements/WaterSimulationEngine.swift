@@ -45,14 +45,39 @@ struct Uniforms {
     var sssIntensity: Float = 0.8
     var showObstacle: Int32 = 1 // New flag to hide red ball
     var expansionFactor: Float = 1.0 // 1.0 to 4.0
+    var renderMode: Int32 = 0 // 0: particles, 1: liquid, 2: pixels
+    var pixelSize: Float = 2.0 // NEW: Pixel size control
     var time: Float = 0
+}
+
+enum RenderMode: Int, CaseIterable, Identifiable {
+    case defaultView = 0
+    case liquid = 1
+    case pixels = 2
+    
+    var id: Int { self.rawValue }
+    var name: String {
+        switch self {
+        case .defaultView: return "DEFAULT"
+        case .liquid: return "LIQUID"
+        case .pixels: return "PIXELS"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .defaultView: return "circle.grid.3x3.fill"
+        case .liquid: return "drop.fill"
+        case .pixels: return "square.grid.2x2.fill"
+        }
+    }
 }
 
 // Phase 4: UI-Specific state that needs @Published behavior
 struct SettingsState: Equatable {
-    var showParticles: Bool = false // Default to false
+    var renderMode: RenderMode = .liquid
+    var pixelSize: Float = 2.0 // NEW: Pixel size control
     var showGrid: Bool = false
-    var showLiquid: Bool = true // Enabled by default for cohesive visuals
     var useGravity: Bool = true
     var useGyro: Bool = false // Tilt-to-Steer
     var useHydrogenMod: Bool = false
@@ -120,6 +145,7 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
     let obstacleRenderPipelineState: MTLRenderPipelineState
     let gridRenderPipelineState: MTLRenderPipelineState
     let liquidRenderPipelineState: MTLRenderPipelineState
+    let pixelRenderPipelineState: MTLRenderPipelineState
     let emitParticlesPipeline: MTLComputePipelineState
     let shakeParticlesPipeline: MTLComputePipelineState
     
@@ -224,10 +250,19 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         do {
             liquidRenderPipelineState = try device.makeRenderPipelineState(descriptor: liquidDesc)
             
+            let pixelDesc = MTLRenderPipelineDescriptor()
+            pixelDesc.vertexFunction = library.makeFunction(name: "liquidVertex")
+            pixelDesc.fragmentFunction = library.makeFunction(name: "pixelFragment")
+            pixelDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
+            pixelDesc.colorAttachments[0].isBlendingEnabled = true
+            pixelDesc.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+            pixelDesc.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            pixelRenderPipelineState = try device.makeRenderPipelineState(descriptor: pixelDesc)
+            
             let emitFunction = library.makeFunction(name: "emitParticles")!
             emitParticlesPipeline = try device.makeComputePipelineState(function: emitFunction)
         } catch {
-            fatalError("Failed to create liquid render pipeline or emit particles pipeline: \(error)")
+            fatalError("Failed to create visual pipelines: \(error)")
         }
         
         #if os(iOS)
@@ -270,6 +305,8 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
             sssIntensity: 0.8,
             showObstacle: defaultShowObstacle,
             expansionFactor: 1.0,
+            renderMode: 1, // Liquid default
+            pixelSize: 2.0,
             time: 0
         )
         
@@ -560,23 +597,36 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         }
         
         // 10. Render Particles
-        renderEncoder.pushDebugGroup("Render Particles")
-        renderEncoder.setRenderPipelineState(renderPipelineState)
-        renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
-        renderEncoder.setVertexBytes(&renderUniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-        renderEncoder.drawPrimitives(type: MTLPrimitiveType.point, vertexStart: 0, vertexCount: Int(renderUniforms.numParticles))
-        renderEncoder.popDebugGroup()
-        
-        // 11. Render Liquid Surface
-        if uniforms.showLiquid != 0 {
-            renderEncoder.pushDebugGroup("Render Liquid")
-            renderEncoder.setRenderPipelineState(liquidRenderPipelineState)
-            renderEncoder.setFragmentBuffer(gridBuffer, offset: 0, index: 0)
-            renderEncoder.setFragmentBytes(&renderUniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-            // Pass background texture for refraction
-            renderEncoder.setFragmentTexture(backgroundTexture, index: 0)
-            renderEncoder.drawPrimitives(type: MTLPrimitiveType.triangleStrip, vertexStart: 0, vertexCount: 4)
+        if uniforms.showParticles != 0 {
+            renderEncoder.pushDebugGroup("Render Particles")
+            renderEncoder.setRenderPipelineState(renderPipelineState)
+            renderEncoder.setVertexBuffer(particleBuffer, offset: 0, index: 0)
+            renderEncoder.setVertexBytes(&renderUniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+            renderEncoder.drawPrimitives(type: MTLPrimitiveType.point, vertexStart: 0, vertexCount: Int(renderUniforms.numParticles))
             renderEncoder.popDebugGroup()
+        }
+        
+        // 11. Render Liquid Surface / Pixels
+        if uniforms.showLiquid != 0 {
+            let pipeline = (uniforms.renderMode == 2) ? pixelRenderPipelineState : liquidRenderPipelineState
+            
+            // Refraction fallback: if liquid mode but no texture, skip or fallback to pixels
+            if uniforms.renderMode == 1 && backgroundTexture == nil {
+                // Skip or could fallback to pixels if desired
+            } else {
+                renderEncoder.pushDebugGroup(uniforms.renderMode == 2 ? "Render Pixels" : "Render Liquid")
+                renderEncoder.setRenderPipelineState(pipeline)
+                renderEncoder.setVertexBytes(&renderUniforms, length: MemoryLayout<Uniforms>.stride, index: 1) // FIXED: Added vertex uniforms
+                renderEncoder.setFragmentBuffer(gridBuffer, offset: 0, index: 0)
+                renderEncoder.setFragmentBytes(&renderUniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                
+                // Pass background texture for refraction (only for liquid)
+                if uniforms.renderMode == 1 {
+                    renderEncoder.setFragmentTexture(backgroundTexture, index: 0)
+                }
+                renderEncoder.drawPrimitives(type: MTLPrimitiveType.triangleStrip, vertexStart: 0, vertexCount: 4)
+                renderEncoder.popDebugGroup()
+            }
         }
         
         // 12. Render Obstacle (Red Ball) - On top
@@ -735,9 +785,11 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
     func syncSettings() {
         let expansion = settings.volumeExpansion
         
-        uniforms.showParticles = (settings.showParticles || !settings.showLiquid) ? 1 : 0
+        uniforms.showParticles = (settings.renderMode == .defaultView) ? 1 : 0
+        uniforms.showLiquid = (settings.renderMode == .liquid || settings.renderMode == .pixels) ? 1 : 0
         uniforms.showGrid = settings.showGrid ? 1 : 0
-        uniforms.showLiquid = settings.showLiquid ? 1 : 0
+        uniforms.renderMode = Int32(settings.renderMode.rawValue)
+        uniforms.pixelSize = settings.pixelSize
         
         // Gravity Control
         #if os(iOS)

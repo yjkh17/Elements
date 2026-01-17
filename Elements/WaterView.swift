@@ -80,20 +80,24 @@ struct TopGlassDock: View {
                         // 1. RENDER SECTION
                         ControlSection(title: "RENDER", icon: "eye.fill") {
                             VStack(alignment: .leading, spacing: 14) {
-                                // Visual Toggles
-                                IconToggle(isOn: $engine.settings.showLiquid, icon: "drop.fill", label: "Liquid")
+                                // Mode Switcher
+                                RenderModeSwitcher(selectedMode: $engine.settings.renderMode)
                                 
                                 Divider().background(.white.opacity(0.1))
                                 
                                 // Sliders
                                 VStack(alignment: .leading, spacing: 12) {
                                     SliderItem(label: "Refraction", icon: "aqi.medium", value: $engine.settings.refractStrength, range: 0...0.1)
-                                        .opacity(engine.settings.showLiquid ? 1 : 0.5)
-                                        .disabled(!engine.settings.showLiquid)
+                                        .opacity(engine.settings.renderMode == .liquid ? 1 : 0.5)
+                                        .disabled(engine.settings.renderMode != .liquid)
                                     
                                     SliderItem(label: "Glow Intensity", icon: "sun.max.fill", value: $engine.settings.sssIntensity, range: 0...2.0)
-                                        .opacity(engine.settings.showLiquid ? 1 : 0.5)
-                                        .disabled(!engine.settings.showLiquid)
+                                        .opacity(engine.settings.renderMode == .liquid ? 1 : 0.5)
+                                        .disabled(engine.settings.renderMode != .liquid)
+                                    
+                                    SliderItem(label: "Pixel Size", icon: "square.grid.2x2", value: $engine.settings.pixelSize, range: 1.0...10.0)
+                                        .opacity(engine.settings.renderMode == .pixels ? 1 : 0.5)
+                                        .disabled(engine.settings.renderMode != .pixels)
                                 }
                             }
                         }
@@ -292,6 +296,37 @@ struct IconToggle: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct RenderModeSwitcher: View {
+    @Binding var selectedMode: RenderMode
+    
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(RenderMode.allCases) { mode in
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        selectedMode = mode
+                    }
+                }) {
+                    VStack(spacing: 4) {
+                        Image(systemName: mode.icon)
+                            .font(.system(size: 16, weight: .semibold))
+                        Text(mode.name)
+                            .font(.system(size: 8, weight: .black))
+                            .tracking(0.5)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(selectedMode == mode ? Color.blue.opacity(0.6) : Color.white.opacity(0.05))
+                    .foregroundColor(selectedMode == mode ? .white : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
     }
 }
 
