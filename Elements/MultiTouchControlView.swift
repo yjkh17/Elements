@@ -1,7 +1,7 @@
 import SwiftUI
-import UIKit
 
 #if os(iOS)
+import UIKit
 struct MultiTouchControlView: UIViewRepresentable {
     var engine: ClothSimulationEngine
     var onInteraction: () -> Void
