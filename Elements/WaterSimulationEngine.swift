@@ -908,12 +908,12 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
     }
     
     func resetSimulation() {
-        resetToCenterSplash()
+        resetToHexagonalPool()
     }
     
     func resetToRandom() {
         frameCount = 0 // Reset frame tracking
-        uniforms.particleRestDensity = 6.0
+        uniforms.particleRestDensity = 0.0 // Force auto-calibration
         
         var particles = [Particle]()
         for _ in 0..<maxParticles {

@@ -167,7 +167,7 @@ struct MetalView: ViewRepresentable {
         mtkView.delegate = engine
         mtkView.enableSetNeedsDisplay = false
         mtkView.isPaused = false
-        mtkView.clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.1, alpha: 1.0)
+        mtkView.clearColor = MTLClearColor(red: 0.76, green: 0.70, blue: 0.50, alpha: 1.0)
         return mtkView
     }
 }

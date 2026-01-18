@@ -30,7 +30,7 @@ struct WaterView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .background(Color.black)
+        .background(Color(red: 0.76, green: 0.70, blue: 0.50))
         .ignoresSafeArea()
     }
     
@@ -188,23 +188,47 @@ struct TopGlassDock: View {
                                 if engine.settings.interactionMode == 2 {
                                     SliderItem(label: "Force Strength", icon: "burst.fill", value: $engine.settings.interactionStrength, range: 0.1...3.0)
                                 }
-                                
-                                HStack(spacing: 12) {
-                                    Button(action: { engine.resetToRandom() }) {
-                                        Label("Random", systemImage: "dice.fill")
+                                                                VStack(spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        Button(action: { engine.resetToHexagonalPool() }) {
+                                            Label("Pool", systemImage: "water.waves")
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        
+                                        Button(action: { engine.resetToDamBreak() }) {
+                                            Label("Dam", systemImage: "square.split.2x1.fill")
+                                        }
+                                        .frame(maxWidth: .infinity)
                                     }
                                     
-                                    Button(action: { engine.resetSimulation() }) {
-                                        Label("Reset", systemImage: "arrow.counterclockwise")
+                                    HStack(spacing: 8) {
+                                        Button(action: { engine.resetToCenterSplash() }) {
+                                            Label("Splash", systemImage: "drop.fill")
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        
+                                        Button(action: { engine.resetToRandom() }) {
+                                            Label("Random", systemImage: "dice.fill")
+                                        }
+                                        .frame(maxWidth: .infinity)
                                     }
                                     
-                                    Spacer()
+                                    Divider()
+                                        .padding(.vertical, 4)
                                     
-                                    Button(action: { engine.isPaused.toggle() }) {
-                                        Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
-                                            .frame(width: 20)
+                                    HStack {
+                                        Button(action: { engine.resetSimulation() }) {
+                                            Label("Reset All", systemImage: "arrow.counterclockwise")
+                                        }
+                                        .tint(.red)
+                                        
+                                        Spacer()
+                                        
+                                        Button(action: { engine.isPaused.toggle() }) {
+                                            Label(engine.isPaused ? "Play" : "Pause", systemImage: engine.isPaused ? "play.fill" : "pause.fill")
+                                        }
+                                        .tint(engine.isPaused ? .green : .orange)
                                     }
-                                    .tint(engine.isPaused ? .green : .orange)
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
