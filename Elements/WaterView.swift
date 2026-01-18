@@ -27,7 +27,11 @@ struct WaterView: View {
             simulationView
             if showUI {
                 TopGlassDock(engine: engine, onExit: onExit)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.9)),
+                        removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.9))
+                    ))
+                    .padding(.top, 20) // Floating offset
             }
         }
         .background(Color(red: 0.76, green: 0.70, blue: 0.50))
@@ -76,236 +80,175 @@ struct TopGlassDock: View {
             // Expanded Controls (Glass Panel)
             if !isCollapsed {
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 25) {
+                        // Header
+                        HStack {
+                            Text("SIMULATION CONTROL")
+                                .font(.system(size: 14, weight: .black))
+                                .tracking(2)
+                                .foregroundColor(.white)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 4)
+                        
                         // 1. RENDER SECTION
-                        ControlSection(title: "RENDER", icon: "eye.fill") {
-                            VStack(alignment: .leading, spacing: 14) {
-                                // Mode Switcher
+                        ControlSection(title: "DISPLAY", icon: "eye.fill") {
+                            VStack(spacing: 16) {
                                 RenderModeSwitcher(selectedMode: $engine.settings.renderMode)
                                 
-                                Divider().background(.white.opacity(0.1))
-                                
-                                // Sliders
-                                VStack(alignment: .leading, spacing: 12) {
+                                VStack(spacing: 12) {
                                     SliderItem(label: "Refraction", icon: "aqi.medium", value: $engine.settings.refractStrength, range: 0...0.1)
-                                        .opacity(engine.settings.renderMode == .liquid ? 1 : 0.5)
                                         .disabled(engine.settings.renderMode != .liquid)
+                                        .opacity(engine.settings.renderMode == .liquid ? 1.0 : 0.5)
                                     
-                                    SliderItem(label: "Glow Intensity", icon: "sun.max.fill", value: $engine.settings.sssIntensity, range: 0...2.0)
-                                        .opacity(engine.settings.renderMode == .liquid ? 1 : 0.5)
+                                    SliderItem(label: "Glow", icon: "sun.max.fill", value: $engine.settings.sssIntensity, range: 0...2.0)
                                         .disabled(engine.settings.renderMode != .liquid)
-                                    
-                                    SliderItem(label: "Pixel Size", icon: "square.grid.2x2", value: $engine.settings.pixelSize, range: 1.0...10.0)
-                                        .opacity(engine.settings.renderMode == .pixels ? 1 : 0.5)
-                                        .disabled(engine.settings.renderMode != .pixels)
+                                        .opacity(engine.settings.renderMode == .liquid ? 1.0 : 0.5)
+
+                                    if engine.settings.renderMode == .pixels {
+                                        SliderItem(label: "Pixel Size", icon: "square.grid.2x2", value: $engine.settings.pixelSize, range: 1.0...10.0)
+                                    }
                                 }
                             }
                         }
                         
                         // 2. PHYSICS SECTION
                         ControlSection(title: "PHYSICS", icon: "atom") {
-                            VStack(alignment: .leading, spacing: 14) {
-                                HStack(spacing: 12) {
-                                    IconToggle(isOn: $engine.settings.useGravity, icon: "arrow.down", label: "Gravity")
-                                    // Gyro Toggle (iOS Only)
+                            VStack(spacing: 16) {
+                                HStack(spacing: 10) {
+                                    IconToggle(isOn: $engine.settings.useGravity, icon: "arrow.down", label: "GRAVITY")
                                     #if os(iOS)
-                                    IconToggle(isOn: $engine.settings.useGyro, icon: "iphone.gen3", label: "Tilt Control")
+                                    IconToggle(isOn: $engine.settings.useGyro, icon: "iphone.gen3", label: "TILT")
                                     #endif
+                                    IconToggle(isOn: $engine.settings.useHydrogenMod, icon: "hexagon.fill", label: "H-BOND")
                                 }
                                 
-                                SliderItem(label: "Expansion", icon: "arrow.up.left.and.arrow.down.right", value: $engine.settings.volumeExpansion, range: 1.0...4.0)
-                                
-                                SliderItem(label: "Surface Tension", icon: "app.dashed", value: $engine.settings.surfaceTension, range: 0.0...2.0)
-                                
-                                SliderItem(label: "Hydrogen Strength", icon: "atom", value: $engine.settings.hydrogenStrength, range: 0.1...5.0)
-                                    .disabled(!engine.settings.useHydrogenMod)
-                                    .opacity(engine.settings.useHydrogenMod ? 1.0 : 0.5)
-                                
-                                HStack(spacing: 12) {
-                                    IconToggle(isOn: $engine.settings.useHydrogenMod, icon: "hexagon.fill", label: "Hydrogen Bonding")
-                                    IconToggle(isOn: $engine.settings.compensateDrift, icon: "arrow.left.and.right", label: "Drift Fix")
-                                }
-                                
-                                HStack(spacing: 12) {
-                                    IconToggle(isOn: $engine.settings.separateParticles, icon: "arrow.up.and.down.and.arrow.left.and.right", label: "Separate")
-                                }
-                                
-                                Button(action: { engine.resetToCenterSplash() }) {
-                                    Label("Center Splash", systemImage: "drop.triangle")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .tint(.blue)
+                                SliderItem(label: "Growth", icon: "arrow.up.left.and.arrow.down.right", value: $engine.settings.volumeExpansion, range: 1.0...4.0)
+                                SliderItem(label: "Surface", icon: "app.dashed", value: $engine.settings.surfaceTension, range: 0.0...2.0)
+                                SliderItem(label: "Time", icon: "clock.fill", value: $engine.settings.timeScale, range: 0.0...2.0)
                             }
                         }
                         
-                                // 3. TIME SECTION
-                                ControlSection(title: "TIME CONTROL", icon: "clock.fill") {
-                                    VStack(alignment: .leading, spacing: 14) {
-                                        HStack {
-                                            Label("Time Speed", systemImage: "speedometer")
-                                                .font(.system(size: 11, weight: .medium))
-                                                .foregroundColor(.secondary)
-                                            Spacer()
-                                            Text(String(format: "%.2fx", engine.settings.timeScale))
-                                                .font(.system(size: 10).monospacedDigit())
-                                                .foregroundColor(.secondary.opacity(0.7))
-                                        }
-                                        
-                                        HStack(spacing: 12) {
-                                            Button(action: { engine.settings.timeScale = max(0.0, engine.settings.timeScale - 0.1) }) {
-                                                Image(systemName: "minus.circle.fill")
-                                                    .font(.system(size: 16))
-                                            }
-                                            .buttonStyle(.plain)
-                                            .foregroundColor(.blue)
-                                            
-                                            Slider(value: $engine.settings.timeScale, in: 0.0...2.0)
-                                            
-                                            Button(action: { engine.settings.timeScale = min(2.0, engine.settings.timeScale + 0.1) }) {
-                                                Image(systemName: "plus.circle.fill")
-                                                    .font(.system(size: 16))
-                                            }
-                                            .buttonStyle(.plain)
-                                            .foregroundColor(.blue)
-                                        }
-                                    }
-                                }
-                                
-                                // 4. SIMULATION SECTION
-                        ControlSection(title: "SIMULATION", icon: "gamecontroller.fill") {
-                            VStack(alignment: .leading, spacing: 14) {
+                        // 3. INTERACTION & PRESETS
+                        ControlSection(title: "INTERACT", icon: "hand.tap.fill") {
+                            VStack(spacing: 16) {
                                 Picker("Mode", selection: $engine.settings.interactionMode) {
-                                    Text("Solid").tag(0)
-                                    Text("Vortex").tag(1)
-                                    Text("Force").tag(2)
-                                    Text("Emit").tag(3)
+                                    Text("SOLID").tag(0)
+                                    Text("VORTEX").tag(1)
+                                    Text("FORCE").tag(2)
+                                    Text("EMIT").tag(3)
                                 }
                                 .pickerStyle(.segmented)
                                 
-                                // Force Strength Slider (Conditional)
                                 if engine.settings.interactionMode == 2 {
-                                    SliderItem(label: "Force Strength", icon: "burst.fill", value: $engine.settings.interactionStrength, range: 0.1...3.0)
+                                    SliderItem(label: "Strength", icon: "burst.fill", value: $engine.settings.interactionStrength, range: 0.1...3.0)
                                 }
-                                                                VStack(spacing: 8) {
-                                    HStack(spacing: 8) {
-                                        Button(action: { engine.resetToHexagonalPool() }) {
-                                            Label("Pool", systemImage: "water.waves")
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        
-                                        Button(action: { engine.resetToDamBreak() }) {
-                                            Label("Dam", systemImage: "square.split.2x1.fill")
-                                        }
-                                        .frame(maxWidth: .infinity)
+                                
+                                Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                                    GridRow {
+                                        PresetButton(title: "POOL", icon: "water.waves", action: { engine.resetToHexagonalPool() })
+                                        PresetButton(title: "DAM", icon: "square.split.2x1.fill", action: { engine.resetToDamBreak() })
                                     }
-                                    
-                                    HStack(spacing: 8) {
-                                        Button(action: { engine.resetToCenterSplash() }) {
-                                            Label("Splash", systemImage: "drop.fill")
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        
-                                        Button(action: { engine.resetToRandom() }) {
-                                            Label("Random", systemImage: "dice.fill")
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                    }
-                                    
-                                    Divider()
-                                        .padding(.vertical, 4)
-                                    
-                                    HStack {
-                                        Button(action: { engine.resetSimulation() }) {
-                                            Label("Reset All", systemImage: "arrow.counterclockwise")
-                                        }
-                                        .tint(.red)
-                                        
-                                        Spacer()
-                                        
-                                        Button(action: { engine.isPaused.toggle() }) {
-                                            Label(engine.isPaused ? "Play" : "Pause", systemImage: engine.isPaused ? "play.fill" : "pause.fill")
-                                        }
-                                        .tint(engine.isPaused ? .green : .orange)
+                                    GridRow {
+                                        PresetButton(title: "SPLASH", icon: "drop.fill", action: { engine.resetToCenterSplash() })
+                                        PresetButton(title: "RANDOM", icon: "dice.fill", action: { engine.resetToRandom() })
                                     }
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
+                                
+                                HStack(spacing: 10) {
+                                    Button(action: { engine.resetSimulation() }) {
+                                        Label("RESET EVERYTHING", systemImage: "arrow.counterclockwise")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 12)
+                                            .background(.red.opacity(0.15))
+                                            .foregroundColor(.red)
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                    
+                                    Button(action: { engine.isPaused.toggle() }) {
+                                        Image(systemName: engine.isPaused ? "play.fill" : "pause.fill")
+                                            .font(.system(size: 14, weight: .bold))
+                                            .frame(width: 50, height: 40)
+                                            .background(engine.isPaused ? Color.green.opacity(0.2) : Color.white.opacity(0.1))
+                                            .foregroundColor(engine.isPaused ? .green : .white)
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                         }
                     }
-                    .padding(20)
-                    .padding(.bottom, 20)
+                    .padding(25)
                 }
+                .frame(maxWidth: 400) // Floating Island Width
                 .background {
-                    VisualEffectView(material: .glassMaterial)
-                        .ignoresSafeArea()
+                    RoundedRectangle(cornerRadius: 35)
+                        .fill(.ultraThinMaterial)
+                        .shadow(color: .black.opacity(0.3), radius: 30, x: 0, y: 15)
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .frame(maxHeight: 500) // Limit height
-                .mask(
-                    LinearGradient(gradient: Gradient(stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.9),
-                        .init(color: .clear, location: 1)
-                    ]), startPoint: .top, endPoint: .bottom)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 35)
+                        .stroke(.white.opacity(0.2), lineWidth: 0.5)
                 )
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8)),
+                    removal: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.8))
+                ))
+                .padding(.bottom, 20)
             }
             
             // Phase 58: Unified Top Bar (Exit Left, Menu Right)
-            HStack(spacing: 0) {
+            HStack(spacing: 12) {
                 // Exit Button (Left) - Standardized Back Position
                 Button(action: { onExit?() }) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                         Text("LAB")
-                            .font(.system(size: 11, weight: .black))
+                            .font(.system(size: 10, weight: .black))
                             .tracking(1)
                     }
                     .foregroundColor(.white)
+                    .frame(height: 38)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
                     .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
+                    .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                 }
-                .allowsHitTesting(true)
-                .buttonStyle(ConditionalButtonStyle())
-                .padding(.leading, 20)
+                .buttonStyle(SpringScaleButtonStyle())
                 
                 Spacer()
                 
                 // Menu Button (Right) - Glass Capsule
                 Button(action: {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
                         isCollapsed.toggle()
                     }
                 }) {
                     HStack(spacing: 8) {
-                        Text(isCollapsed ? "MENU" : "CLOSE")
-                            .font(.system(size: 11, weight: .bold))
-                            .tracking(1)
+                        Text(isCollapsed ? "COMMAND" : "CLOSE")
+                            .font(.system(size: 10, weight: .black))
+                            .tracking(1.5)
                         
                         Image(systemName: isCollapsed ? "slider.horizontal.3" : "chevron.up")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                     }
-                    .foregroundStyle(.primary)
+                    .foregroundColor(.white)
+                    .frame(height: 38)
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background {
-                        VisualEffectView(material: .glassMaterial)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
-                            .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
-                    }
+                    .background(.ultraThinMaterial)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                 }
-                .buttonStyle(ConditionalButtonStyle())
-                .padding(.trailing, 20)
+                .buttonStyle(SpringScaleButtonStyle())
             }
-            .padding(.top, 55) // Phase 60: Fine-tuned lower position
+            .frame(maxWidth: 400) // Match Island Width
+            .padding(.top, 10)
+            .padding(.horizontal, 20)
             .zIndex(100)
         }
     }
@@ -325,19 +268,66 @@ struct ControlSection<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 11, weight: .heavy))
-                .foregroundColor(.secondary)
-                .tracking(1)
+        VStack(alignment: .leading, spacing: 14) {
+            Label {
+                Text(title)
+                    .font(.system(size: 10, weight: .black))
+                    .tracking(1.5)
+            } icon: {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundColor(.white.opacity(0.4))
             
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 15) {
                 content
             }
-            .padding(12)
-            .background(Color.white.opacity(0.05))
-            .cornerRadius(12)
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(.white.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(.white.opacity(0.05), lineWidth: 0.5)
+            )
         }
+    }
+}
+
+struct PresetButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .bold))
+                Text(title)
+                    .font(.system(size: 9, weight: .black))
+                    .tracking(1)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 60)
+            .background(.white.opacity(0.05))
+            .foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+            .overlay(
+                RoundedRectangle(cornerRadius: 15)
+                    .stroke(.white.opacity(0.1), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(SpringScaleButtonStyle())
+    }
+}
+
+struct SpringScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 
@@ -347,21 +337,24 @@ struct IconToggle: View {
     let label: String
     
     var body: some View {
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isOn.toggle() } }) {
+        Button(action: { withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { isOn.toggle() } }) {
             VStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 14, weight: .bold))
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 8, weight: .black))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(isOn ? Color.blue.opacity(0.8) : Color.white.opacity(0.1))
-            .foregroundColor(isOn ? .white : .secondary)
-            .cornerRadius(8)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+            .frame(height: 50)
+            .background(isOn ? Color.blue.opacity(0.3) : Color.white.opacity(0.05))
+            .foregroundColor(isOn ? .blue : .white.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isOn ? Color.blue.opacity(0.5) : Color.white.opacity(0.1), lineWidth: 0.5)
+            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SpringScaleButtonStyle())
     }
 }
 
@@ -369,30 +362,35 @@ struct RenderModeSwitcher: View {
     @Binding var selectedMode: RenderMode
     
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 8) {
             ForEach(RenderMode.allCases) { mode in
                 Button(action: {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         selectedMode = mode
                     }
                 }) {
-                    VStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         Image(systemName: mode.icon)
-                            .font(.system(size: 16, weight: .semibold))
-                        Text(mode.name)
-                            .font(.system(size: 8, weight: .black))
-                            .tracking(0.5)
+                            .font(.system(size: 12, weight: .bold))
+                        if selectedMode == mode {
+                            Text(mode.name.uppercased())
+                                .font(.system(size: 9, weight: .black))
+                                .tracking(1)
+                        }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(selectedMode == mode ? Color.blue.opacity(0.6) : Color.white.opacity(0.05))
-                    .foregroundColor(selectedMode == mode ? .white : .secondary)
+                    .frame(height: 38)
+                    .background(selectedMode == mode ? Color.blue.opacity(0.3) : Color.white.opacity(0.05))
+                    .foregroundColor(selectedMode == mode ? .white : .white.opacity(0.4))
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(selectedMode == mode ? Color.blue.opacity(0.5) : Color.white.opacity(0.05), lineWidth: 0.5)
+                    )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(SpringScaleButtonStyle())
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 0.5))
     }
 }
 
@@ -403,19 +401,29 @@ struct SliderItem: View {
     let range: ClosedRange<Float>
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(label, systemImage: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
+                Label {
+                    Text(label.uppercased())
+                        .font(.system(size: 8, weight: .black))
+                        .tracking(1)
+                } icon: {
+                    Image(systemName: icon)
+                        .font(.system(size: 10))
+                }
+                .foregroundColor(.white.opacity(0.5))
+                
                 Spacer()
+                
                 Text(String(format: "%.2f", value))
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .font(.system(size: 8, weight: .bold).monospacedDigit())
+                    .foregroundColor(.white.opacity(0.3))
             }
             
             Slider(value: $value, in: range)
+                .accentColor(.blue)
         }
+        .padding(.vertical, 4)
     }
 }
 

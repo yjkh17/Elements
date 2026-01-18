@@ -172,7 +172,7 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
     
     @Published var subSteps: Int = 1
     @Published var isPaused: Bool = false
-    let maxParticles: Int = 100000 // 100k (Phase 7 stable)
+    let maxParticles: Int = 40000 // 40k (User Requested Limit)
     private var isTouching: Bool = false
     private var lastTouchPos: SIMD2<Float> = .zero
     
@@ -924,35 +924,26 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         }
         uniforms.numParticles = UInt32(particles.count)
         
-        // RE-FILL RESERVE
-        let reserveCount = maxParticles - particles.count
-        if reserveCount > 0 {
-            for _ in 0..<reserveCount {
-                particles.append(Particle(
-                    position: SIMD2<Float>(-100, -100),
-                    velocity: SIMD2<Float>(0, 0),
-                    color: packColor(r: 0.2, g: 0.6, b: 1.0, a: 1.0)
-                ))
-            }
-        }
+        // NO RESERVE needed for Random as it fills the budget
         
         updateParticleBuffer(with: particles)
     }
 
     func resetToHexagonalPool() {
         frameCount = 0 
-        uniforms.particleRestDensity = 0.0 // Force auto-calibration
+        uniforms.particleRestDensity = 0.0 // Force auto-calibration at frame 20
         
         var particles = [Particle]()
         let h = uniforms.spacing
-        let dx = h // Distribute exactly at spacing distance
+        let dx = h * 0.85 // Tightened to fit ~40k in 75% height
         let dy = dx * (sqrt(3.0) / 2.0)
         
         let tankWidth = uniforms.domainSize.x
         let tankHeight = uniforms.domainSize.y
         
-        let poolHeight: Float = tankHeight * 0.6 // Fill 60% of vertical space
-        let wallMargin: Float = h * 1.5
+        // Fill 75% of vertical space
+        let poolHeight: Float = tankHeight * 0.75 
+        let wallMargin: Float = h * 1.0
         
         let numX = Int(floor((tankWidth - 2.0 * wallMargin) / dx))
         let numY = Int(floor((poolHeight - 2.0 * wallMargin) / dy))
@@ -960,7 +951,8 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         for i in 0..<numX {
             for j in 0..<numY {
                 if particles.count >= maxParticles { break }
-                let px = wallMargin + dx * Float(i) + (j % 2 == 0 ? 0.0 : dx * 0.5)
+                let offsetX = (j % 2 == 0 ? 0.0 : dx * 0.5)
+                let px = wallMargin + dx * Float(i) + offsetX
                 let py = wallMargin + dy * Float(j)
                 
                 particles.append(Particle(
@@ -992,21 +984,24 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         
         var particles = [Particle]()
         let h = uniforms.spacing
-        let dx = h // Hexagonal spacing
+        let dx = h * 0.75 // Adjusted for 40k budget
         let dy = dx * (sqrt(3.0) / 2.0)
         
-        let relWaterWidth: Float = 0.6
+        let relWaterWidth: Float = 0.5
         let relWaterHeight: Float = 0.8
         let tankWidth = uniforms.domainSize.x
         let tankHeight = uniforms.domainSize.y
         
-        let numX = Int(floor((relWaterWidth * tankWidth - 2.0 * dx) / dx))
-        let numY = Int(floor((relWaterHeight * tankHeight - 2.0 * dx) / dy))
+        let innerWidth = relWaterWidth * tankWidth - 2.0 * dx
+        let innerHeight = relWaterHeight * tankHeight - 2.0 * dx
+        let numX = Int(floor(innerWidth / dx))
+        let numY = Int(floor(innerHeight / dy))
         
         for i in 0..<numX {
             for j in 0..<numY {
                 if particles.count >= maxParticles { break }
-                let px = dx + dx * Float(i) + (j % 2 == 0 ? 0.0 : dx * 0.5)
+                let offsetX = (j % 2 == 0 ? 0.0 : dx * 0.5)
+                let px = dx + dx * Float(i) + offsetX
                 let py = dx + dy * Float(j)
                 
                 particles.append(Particle(
@@ -1038,15 +1033,15 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         
         var particles = [Particle]()
         let h = uniforms.spacing
-        let dx = h // Hexagonal spacing
+        let dx = h * 0.5 // Maximum density for Splash to hit 40k
         let dy = dx * (sqrt(3.0) / 2.0)
         
         let tankWidth = uniforms.domainSize.x
         let tankHeight = uniforms.domainSize.y
         
-        // Match a tall column in the middle
+        // Match a column in the middle
         let colWidth: Float = 1.0
-        let colHeight: Float = 2.0
+        let colHeight: Float = 2.4 // Taller column
         let startX = (tankWidth - colWidth) * 0.5
         
         let numX = Int(floor(colWidth / dx))
@@ -1055,7 +1050,8 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
         for i in 0..<numX {
             for j in 0..<numY {
                 if particles.count >= maxParticles { break }
-                let px = startX + dx * Float(i) + (j % 2 == 0 ? 0.0 : dx * 0.5)
+                let offsetX = (j % 2 == 0 ? 0.0 : dx * 0.5)
+                let px = startX + dx * Float(i) + offsetX
                 let py = (tankHeight - colHeight) + dy * Float(j) // Drop from top
                 
                 particles.append(Particle(
