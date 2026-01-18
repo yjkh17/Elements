@@ -197,22 +197,48 @@ kernel void integrateParticles(
     float2 dPos = pos - uniforms.obstaclePos;
     float distSq = dot(dPos, dPos);
     float obstacleR = uniforms.obstacleRadius + h * 0.5f;
-    if (distSq < obstacleR * obstacleR) {
+    float rSq = obstacleR * obstacleR;
+    
+    if (distSq < rSq) {
         float dist = sqrt(distSq);
+        float2 normal = (dist > 0.0001f) ? (dPos / dist) : float2(1, 0);
+        
+        // --- Shared Dynamics ---
+        float velMag = length(uniforms.obstacleVel);
+        // Velocity-aware boost: Moving fast increases force significantly
+        float speedBoost = 1.0f + velMag * 5.0f; 
+        // Smooth Step/Gaussian-like Falloff for "soft" edges
+        float falloff = saturate(1.0f - (distSq / rSq));
+        falloff = falloff * falloff; // Quadratic falloff for smoother feel
+        
         if (uniforms.interactionMode == 0) {
-            float2 normal = (dist > 0.0001f) ? (dPos / dist) : float2(1, 0);
+            // MODE 0: PUSH (Collider)
+            // Still solid, but inherits some velocity for a "scooping" feel
             pos = uniforms.obstaclePos + normal * obstacleR;
-            particles[id].velocity = uniforms.obstacleVel;
+            particles[id].velocity = mix(particles[id].velocity, uniforms.obstacleVel, 0.4f);
         } else if (uniforms.interactionMode == 1 && dist > 0.0001f) {
-            float strength = uniforms.interactionStrength * 10.0f;
+            // MODE 1: SWIRL/VORTEX
+            float strength = uniforms.interactionStrength * 15.0f * speedBoost;
             float2 tangent = float2(-dPos.y, dPos.x) / dist;
-            particles[id].velocity += tangent * strength * uniforms.dt;
+            particles[id].velocity += tangent * strength * falloff * uniforms.dt;
+            // Add a little inward/outward motion based on rotation to keep it stable
+            particles[id].velocity += normal * strength * 0.1f * falloff * uniforms.dt;
         } else if (uniforms.interactionMode == 2 && dist > 0.0001f) {
-            // Force Mode: Radial Repulsion
-            float strength = uniforms.interactionStrength * 40.0f;
-            float2 normal = dPos / dist;
-            float falloff = 1.0f - (dist / obstacleR); // Stronger at center
+            // MODE 2: FORCE (Radial Pushing)
+            float strength = uniforms.interactionStrength * 60.0f * speedBoost;
+            
+            // 1. Radial component
             particles[id].velocity += normal * strength * falloff * uniforms.dt;
+            
+            // 2. Directional component (allows "throwing" water)
+            particles[id].velocity += uniforms.obstacleVel * 5.0f * falloff * uniforms.dt;
+            
+            // 3. Subtle Vortex component during movement (creates eddies)
+            if (velMag > 0.1f) {
+                float2 tangent = float2(-dPos.y, dPos.x) / dist;
+                float vortexStrength = strength * 0.2f * saturate(velMag * 2.0f);
+                particles[id].velocity += tangent * vortexStrength * falloff * uniforms.dt;
+            }
         }
     }
     
@@ -657,6 +683,7 @@ struct VertexOut {
     float4 position [[position]];
     float3 color;
     float pointSize [[point_size]];
+    float2 localPos;
 };
 
 // DELETED calculateGridKeys (Fused into integrateAndHash)
@@ -705,7 +732,10 @@ vertex VertexOut obstacleVertex(
         out.position = float4(-10, -10, 0, 1);
         return out;
     }
-    float2 worldPos = uniforms.obstaclePos + in.position * uniforms.obstacleRadius;
+    
+    // VISUAL EXPANSION: Render 1.5x larger than physical radius for the halo/glow
+    float visualScale = 1.5f;
+    float2 worldPos = uniforms.obstaclePos + in.position * uniforms.obstacleRadius * visualScale;
     
     // Zoom-Aware Mapping
     float2 center = uniforms.domainSize * 0.5;
@@ -714,6 +744,7 @@ vertex VertexOut obstacleVertex(
     
     out.color = float3(1.0, 0.0, 0.0); // Bright Red
     out.pointSize = 1.0; 
+    out.localPos = in.position; // Still 0->1 range
     return out;
 }
 
@@ -721,12 +752,30 @@ fragment float4 obstacleFragment(
     VertexOut in [[stage_in]],
     constant Uniforms& uniforms [[buffer(0)]]
 ) {
-    if (uniforms.interactionMode == 1) {
-        // Vortex is a vibrant magenta/purple
-        return float4(0.8, 0.2, 1.0, 0.4); 
+    float dist = length(in.localPos);
+    float physicalRadiusEdge = 1.0f / 1.5f; // Threshold where solid obstacle ends
+    
+    // 1. Solid Core
+    if (dist < physicalRadiusEdge) {
+        if (uniforms.interactionMode == 1) return float4(0.8, 0.2, 1.0, 0.8);
+        return float4(in.color, 1.0);
     }
-    // Solid is the original red/color passed from vertex
-    return float4(in.color, 1.0);
+    
+    // 2. Reactive Force Halo (outside the solid core)
+    float velMag = length(uniforms.obstacleVel);
+    float glow = saturate(velMag * 2.0f);
+    
+    // Smooth fade out from the physical edge to the visual edge
+    float normalizedHaloDist = (dist - physicalRadiusEdge) / (1.0f - physicalRadiusEdge);
+    float alpha = saturate(1.0f - normalizedHaloDist);
+    alpha = alpha * alpha; // Nicer falloff
+    
+    float3 haloColor = (uniforms.interactionMode == 1) ? float3(0.9, 0.5, 1.0) : float3(1.0, 0.4, 0.4);
+    
+    // Pulsing effect
+    float pulse = 0.5f + 0.5f * sin(uniforms.dt * 60.0f); 
+    
+    return float4(haloColor, alpha * (0.2f + glow * 0.8f * pulse));
 }
 
 // GRID SHADERS
