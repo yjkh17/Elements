@@ -71,6 +71,9 @@ struct Uniforms {
     float expansionFactor;
     int renderMode;
     float pixelSize; // NEW: Dynamic pixel size
+    float surfaceTension; // NEW: Physical Cohesion
+    float zoomLevel;      // NEW: Pinch to zoom
+    float2 zoomOffset;    // NEW: Pan/Zoom offset
     float time;
 };
 
@@ -400,17 +403,59 @@ kernel void pushParticlesApart(
                     float d2 = dot(diff, diff);
                     if (d2 > 0) {
                         float d = sqrt(d2);
+                        float timeWeight = uniforms.dt * 60.0f;
                         if (d < minDist) {
                             float force = (minDist - d) / (d + 1e-6f);
-                            correction += diff * force * 0.2f; // Softened from 0.5f to prevent "boiling" gaps
+                            correction += diff * force * 0.2f * timeWeight; // Scale with time
                             
                             float4 color_id = unpackColor(particles[id].color);
                             float4 color_pIdx = unpackColor(particles[pIdx].color);
                             float4 avgColor = (color_id + color_pIdx) * 0.5f;
                             particles[id].color = packColor(color_id + (avgColor - color_id) * uniforms.colorDiffusionCoeff);
-                        } else if (uniforms.useHydrogenMod != 0 && d < minDist * 1.5f) {
-                            float pull = (d - minDist) * uniforms.hydrogenStrength * 0.02f;
-                            correction -= diff * pull;
+                        } else {
+                            // High-Fidelity Dual Interaction System
+                            
+                            // 1. Surface Tension (Physical Cohesion - Macro Scale)
+                            if (uniforms.surfaceTension > 0.0f && d < minDist * 2.5f) {
+                                float cohesionStrength = uniforms.surfaceTension * 0.15f;
+                                float falloff = 1.0f - (d / (minDist * 2.5f));
+                                correction -= diff * cohesionStrength * (falloff * falloff) * timeWeight;
+                            }
+                            
+                            // 2. Hydrogen Bonding (Structural Crystallization - Micro Scale)
+                            if (uniforms.useHydrogenMod != 0 && d < minDist * 1.6f) {
+                                // Bipolar Snapping Force: Aggressively organized hexagonal lattice
+                                float targetDist = minDist * 0.96f; // Tight pack
+                                float stiffness = uniforms.hydrogenStrength * 0.25f; 
+                                
+                                // Calculate displacement from target
+                                float delta = d - targetDist;
+                                
+                                // Non-linear "snap" effect: Stronger near targetDist to lock it in
+                                float snap = delta * stiffness;
+                                if (abs(delta) < uniforms.particleRadius * 0.2f) {
+                                    snap *= 1.5f; // "Lock-in" zone
+                                }
+                                
+                                // Damping term (Velocity-based friction)
+                                float2 relVel = particles[id].velocity - particles[pIdx].velocity;
+                                float damping = dot(relVel, diff / (d + 1e-4f)) * 0.12f * uniforms.hydrogenStrength;
+                                
+                                // Total structural correction
+                                float structuralForce = (snap + damping) * timeWeight;
+                                
+                                // SAFETY: Clamp to prevent particle jumping too far in one frame
+                                float maxShift = uniforms.particleRadius * 0.6f;
+                                structuralForce = clamp(structuralForce, -maxShift, maxShift);
+                                
+                                correction -= (diff / (d + 1e-4f)) * structuralForce;
+                                
+                                // Bonus: Color particles by their "bond stability" (structural convergence)
+                                if (abs(delta) < uniforms.particleRadius * 0.1f) {
+                                    float4 color_id = unpackColor(particles[id].color);
+                                    particles[id].color = packColor(float4(color_id.rgb + 0.05f * uniforms.hydrogenStrength * timeWeight, color_id.a));
+                                }
+                            }
                         }
                     }
                 }
@@ -625,16 +670,16 @@ vertex VertexOut particleVertex(const device Particle* particles [[buffer(0)]], 
     }
     float2 pos = particles[id].position;
     
-    // Direct Mapping (Simulation Width now matches Viewport Aspect)
-    float2 normPos = (pos / uniforms.domainSize) * 2.0 - 1.0;
+    // Zoom-Aware Mapping
+    float2 center = uniforms.domainSize * 0.5;
+    float2 normPos = (pos - (center + uniforms.zoomOffset)) * uniforms.zoomLevel / center;
     out.position = float4(normPos, 0, 1);
     
     out.color = unpackColor(particles[id].color).rgb;
     
-    // Dynamic Point Size relative to viewport height
-    // Refinement: Scale by expansionFactor for visual bulk
+    // Dynamic Point Size with Zoom Scaling
     float worldToPixel = uniforms.viewportSize.y / uniforms.domainSize.y;
-    out.pointSize = uniforms.particleRadius * 2.2 * worldToPixel * sqrt(uniforms.expansionFactor);
+    out.pointSize = uniforms.particleRadius * 2.2 * worldToPixel * sqrt(uniforms.expansionFactor) * uniforms.zoomLevel;
     
     return out;
 }
@@ -660,10 +705,11 @@ vertex VertexOut obstacleVertex(
         out.position = float4(-10, -10, 0, 1);
         return out;
     }
-    float2 pos = in.position * (uniforms.obstacleRadius + uniforms.particleRadius) + uniforms.obstaclePos;
+    float2 worldPos = uniforms.obstaclePos + in.position * uniforms.obstacleRadius;
     
-    // Direct Mapping
-    float2 normPos = (pos / uniforms.domainSize) * 2.0 - 1.0;
+    // Zoom-Aware Mapping
+    float2 center = uniforms.domainSize * 0.5;
+    float2 normPos = (worldPos - (center + uniforms.zoomOffset)) * uniforms.zoomLevel / center;
     out.position = float4(normPos, 0, 1);
     
     out.color = float3(1.0, 0.0, 0.0); // Bright Red
@@ -708,12 +754,11 @@ vertex VertexOut gridVertex(uint id [[vertex_id]], constant Uniforms& uniforms [
         pos.x = (vertIdx == 0) ? 0 : uniforms.domainSize.x;
     }
     
-    float2 normPos = (pos / uniforms.domainSize) * 2.0 - 1.0;
+    float2 normPos = (pos - (uniforms.domainSize * 0.5 + uniforms.zoomOffset)) * uniforms.zoomLevel / (uniforms.domainSize * 0.5);
     
     // ADJUSTMENT: Shift 1 pixel left and 1 pixel down
-    float2 pixelSize = 2.0 / uniforms.viewportSize;
-    normPos.x -= pixelSize.x;
-    normPos.y -= pixelSize.y;
+    float2 pixelShift = 2.0 / uniforms.viewportSize;
+    normPos -= pixelShift;
     
     out.position = float4(normPos, 0, 1);
     out.color = float3(0.1, 0.1, 0.1); // Subtle grid lines
@@ -753,7 +798,13 @@ vertex LiquidVertexOut liquidVertex(uint vid [[vertex_id]], constant Uniforms& u
     
     LiquidVertexOut out;
     out.position = pos;
-    out.uv = uvs[vid];
+    
+    // Transform UVs for Zoom & Pan
+    // Simulation is Y-up, Texture is Y-down.
+    float2 centeredUV = uvs[vid] - 0.5;
+    out.uv.x = centeredUV.x / uniforms.zoomLevel + 0.5 + (uniforms.zoomOffset.x / uniforms.domainSize.x);
+    out.uv.y = centeredUV.y / uniforms.zoomLevel + 0.5 - (uniforms.zoomOffset.y / uniforms.domainSize.y);
+    
     return out;
 }
 

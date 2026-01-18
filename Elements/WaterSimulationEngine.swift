@@ -47,6 +47,10 @@ struct Uniforms {
     var expansionFactor: Float = 1.0 // 1.0 to 4.0
     var renderMode: Int32 = 0 // 0: particles, 1: liquid, 2: pixels
     var pixelSize: Float = 2.0 // NEW: Pixel size control
+    var surfaceTension: Float = 0.0 // NEW: Physical Cohesion
+    var zoomLevel: Float = 1.0 // NEW: Pinch to zoom
+    var zoomOffset: SIMD2<Float> = SIMD2<Float>(0, 0) // NEW: Pan/Zoom offset
+    var timeScale: Float = 1.0 // NEW: Time speed control
     var time: Float = 0
 }
 
@@ -77,6 +81,7 @@ enum RenderMode: Int, CaseIterable, Identifiable {
 struct SettingsState: Equatable {
     var renderMode: RenderMode = .liquid
     var pixelSize: Float = 2.0 // NEW: Pixel size control
+    var surfaceTension: Float = 0.0 // NEW: Physical Cohesion
     var showGrid: Bool = false
     var useGravity: Bool = true
     var useGyro: Bool = false // Tilt-to-Steer
@@ -89,6 +94,9 @@ struct SettingsState: Equatable {
     var separateParticles: Bool = true
     var volumeExpansion: Float = 1.0 // 1.0 is default, up to 4.0
     var interactionStrength: Float = 1.0 // Force/Vortex Multiplier
+    var timeScale: Float = 1.0 // NEW: Time speed control
+    var zoomLevel: Float = 1.0 // NEW: Pinch to zoom
+    var zoomOffset: SIMD2<Float> = SIMD2<Float>(0, 0)
 }
 
 struct EmitUniforms {
@@ -307,6 +315,10 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
             expansionFactor: 1.0,
             renderMode: 1, // Liquid default
             pixelSize: 2.0,
+            surfaceTension: 0.0,
+            zoomLevel: 1.0,
+            zoomOffset: SIMD2<Float>(0, 0),
+            timeScale: 1.0,
             time: 0
         )
         
@@ -783,13 +795,29 @@ class WaterSimulationEngine: NSObject, ObservableObject, MTKViewDelegate {
     
     // Phase 4 Helpers
     func syncSettings() {
+        // 1. Core Simulation Parameters
         let expansion = settings.volumeExpansion
+        
+        // Time Scaling logic: Scale subSteps with speed to maintain stability
+        let scale = settings.timeScale
+        let targetSubSteps = max(1, Int(ceil(scale * 3.0))) // 3 steps per 1.0x speed for safety
+        if self.subSteps != targetSubSteps {
+            self.subSteps = targetSubSteps
+        }
+        
+        let baseDt: Float = 1.0 / 60.0
+        uniforms.dt = baseDt * scale
         
         uniforms.showParticles = (settings.renderMode == .defaultView) ? 1 : 0
         uniforms.showLiquid = (settings.renderMode == .liquid || settings.renderMode == .pixels) ? 1 : 0
         uniforms.showGrid = settings.showGrid ? 1 : 0
         uniforms.renderMode = Int32(settings.renderMode.rawValue)
         uniforms.pixelSize = settings.pixelSize
+        uniforms.surfaceTension = settings.surfaceTension
+        
+        // Zoom and Pan
+        uniforms.zoomLevel = settings.zoomLevel
+        uniforms.zoomOffset = settings.zoomOffset
         
         // Gravity Control
         #if os(iOS)

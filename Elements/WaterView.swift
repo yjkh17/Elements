@@ -115,8 +115,18 @@ struct TopGlassDock: View {
                                 
                                 SliderItem(label: "Expansion", icon: "arrow.up.left.and.arrow.down.right", value: $engine.settings.volumeExpansion, range: 1.0...4.0)
                                 
+                                SliderItem(label: "Surface Tension", icon: "app.dashed", value: $engine.settings.surfaceTension, range: 0.0...2.0)
+                                
+                                SliderItem(label: "Hydrogen Strength", icon: "atom", value: $engine.settings.hydrogenStrength, range: 0.1...5.0)
+                                    .disabled(!engine.settings.useHydrogenMod)
+                                    .opacity(engine.settings.useHydrogenMod ? 1.0 : 0.5)
+                                
                                 HStack(spacing: 12) {
+                                    IconToggle(isOn: $engine.settings.useHydrogenMod, icon: "hexagon.fill", label: "Hydrogen Bonding")
                                     IconToggle(isOn: $engine.settings.compensateDrift, icon: "arrow.left.and.right", label: "Drift Fix")
+                                }
+                                
+                                HStack(spacing: 12) {
                                     IconToggle(isOn: $engine.settings.separateParticles, icon: "arrow.up.and.down.and.arrow.left.and.right", label: "Separate")
                                 }
                                 
@@ -130,7 +140,40 @@ struct TopGlassDock: View {
                             }
                         }
                         
-                        // 3. SIMULATION SECTION
+                                // 3. TIME SECTION
+                                ControlSection(title: "TIME CONTROL", icon: "clock.fill") {
+                                    VStack(alignment: .leading, spacing: 14) {
+                                        HStack {
+                                            Label("Time Speed", systemImage: "speedometer")
+                                                .font(.system(size: 11, weight: .medium))
+                                                .foregroundColor(.secondary)
+                                            Spacer()
+                                            Text(String(format: "%.2fx", engine.settings.timeScale))
+                                                .font(.system(size: 10).monospacedDigit())
+                                                .foregroundColor(.secondary.opacity(0.7))
+                                        }
+                                        
+                                        HStack(spacing: 12) {
+                                            Button(action: { engine.settings.timeScale = max(0.0, engine.settings.timeScale - 0.1) }) {
+                                                Image(systemName: "minus.circle.fill")
+                                                    .font(.system(size: 16))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .foregroundColor(.blue)
+                                            
+                                            Slider(value: $engine.settings.timeScale, in: 0.0...2.0)
+                                            
+                                            Button(action: { engine.settings.timeScale = min(2.0, engine.settings.timeScale + 0.1) }) {
+                                                Image(systemName: "plus.circle.fill")
+                                                    .font(.system(size: 16))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .foregroundColor(.blue)
+                                        }
+                                    }
+                                }
+                                
+                                // 4. SIMULATION SECTION
                         ControlSection(title: "SIMULATION", icon: "gamecontroller.fill") {
                             VStack(alignment: .leading, spacing: 14) {
                                 Picker("Mode", selection: $engine.settings.interactionMode) {
@@ -144,7 +187,6 @@ struct TopGlassDock: View {
                                 // Force Strength Slider (Conditional)
                                 if engine.settings.interactionMode == 2 {
                                     SliderItem(label: "Force Strength", icon: "burst.fill", value: $engine.settings.interactionStrength, range: 0.1...3.0)
-                                        .transition(.opacity.combined(with: .move(edge: .top)))
                                 }
                                 
                                 HStack(spacing: 12) {
@@ -406,35 +448,117 @@ extension WaterSimulationEngine {
 struct SimulationContainer: View {
     @ObservedObject var engine: WaterSimulationEngine
     @State private var canvasSize: CGSize = .zero
+    @State private var lastInteractionPos: CGPoint = .zero
+    @State private var baseZoom: Float = 1.0
+    @State private var showZoomHUD: Bool = false
+    @State private var hudTimer: Timer?
+    
     var onInteractionStart: () -> Void
     var onInteractionEnd: () -> Void
     var onDoubleTap: () -> Void
     
     var body: some View {
-        MetalView(engine: engine)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea()
+        MetalView(
+            engine: engine,
+            onInteractionStart: onInteractionStart,
+            onInteractionEnd: onInteractionEnd,
+            onDoubleTap: onDoubleTap,
+            showZoomHUD: { isShowing in
+                if isShowing {
+                    hudTimer?.invalidate()
+                    withAnimation { showZoomHUD = true }
+                } else {
+                    hudTimer?.invalidate()
+                    hudTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
+                        withAnimation { showZoomHUD = false }
+                    }
+                }
+            }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+        #if os(macOS)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         onInteractionStart()
+                        lastInteractionPos = value.location
                         let width = Float(canvasSize.width)
                         let height = Float(canvasSize.height)
-                        let x = Float(value.location.x) / width * engine.uniforms.domainSize.x
-                        let y = (1.0 - Float(value.location.y) / height) * engine.uniforms.domainSize.y
+                        
+                        // Interaction Mapping must account for Zoom & Offset
+                        let ndcX = (Float(value.location.x) / width) * 2.0 - 1.0
+                        let ndcY = (1.0 - Float(value.location.y) / height) * 2.0 - 1.0
+                        
+                        let center = engine.uniforms.domainSize * 0.5
+                        let x = (ndcX * center.x) / engine.settings.zoomLevel + (center.x + engine.settings.zoomOffset.x)
+                        let y = (ndcY * center.y) / engine.settings.zoomLevel + (center.y + engine.settings.zoomOffset.y)
+                        
+                        // Only set obstacle if not panning (heuristic: if zoomed in, we might want to pan?)
+                        // For now, allow both, but refine mapping
                         engine.setObstacle(x: x, y: y, reset: false)
                     }
                     .onEnded { _ in
                         engine.hideObstacle()
                         onInteractionEnd()
+                        baseZoom = engine.settings.zoomLevel
                     }
             )
             .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { value in
+                        let oldZoom = engine.settings.zoomLevel
+                        let newZoom = max(1.0, min(10.0, baseZoom * Float(value.magnitude)))
+                        
+                        // FOCAL POINT ZOOMING & PANNING
+                        let width = Float(canvasSize.width)
+                        let height = Float(canvasSize.height)
+                        let ndcX = (Float(lastInteractionPos.x) / width) * 2.0 - 1.0
+                        let ndcY = (1.0 - Float(lastInteractionPos.y) / height) * 2.0 - 1.0
+                        
+                        let center = engine.uniforms.domainSize * 0.5
+                        
+                        // Calculate where the cursor is in world space before any changes
+                        let worldX = (ndcX * center.x) / oldZoom + engine.uniforms.zoomOffset.x
+                        let worldY = (ndcY * center.y) / oldZoom + engine.uniforms.zoomOffset.y
+                        
+                        // Update Zoom
+                        engine.settings.zoomLevel = newZoom
+                        
+                        // Update Offset based on current interaction position (enables panning during pinch)
+                        let targetOffX = worldX - (ndcX * center.x) / newZoom
+                        let targetOffY = worldY - (ndcY * center.y) / newZoom
+                        
+                        // CLAMPING: Prevent empty space at edges
+                        let maxOffX = center.x * (1.0 - 1.0 / newZoom)
+                        let maxOffY = center.y * (1.0 - 1.0 / newZoom)
+                        
+                        engine.settings.zoomOffset.x = max(-maxOffX, min(maxOffX, targetOffX))
+                        engine.settings.zoomOffset.y = max(-maxOffY, min(maxOffY, targetOffY))
+                        
+                        // Show HUD
+                        showZoomHUD = true
+                        hudTimer?.invalidate()
+                        hudTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { _ in
+                            withAnimation { showZoomHUD = false }
+                        }
+                    }
+                    .onEnded { _ in
+                        baseZoom = engine.settings.zoomLevel
+                    }
+            )
+            #endif
+            #if os(macOS)
+            .simultaneousGesture(
                 TapGesture(count: 2)
                     .onEnded {
+                        engine.settings.zoomLevel = 1.0
+                        engine.settings.zoomOffset = .zero
+                        baseZoom = 1.0
                         onDoubleTap()
                     }
             )
+            #endif
             .background(
                 GeometryReader { geo in
                     Color.clear
@@ -442,6 +566,29 @@ struct SimulationContainer: View {
                         .onChange(of: geo.size) { _, newValue in canvasSize = newValue }
                 }
             )
+            #if os(macOS)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    lastInteractionPos = location
+                case .ended:
+                    break
+                }
+            }
+            #endif
+            .overlay(alignment: .top) {
+                if showZoomHUD || engine.settings.zoomLevel > 1.01 {
+                    Text(String(format: "x%.2f", engine.settings.zoomLevel))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(.ultraThinMaterial))
+                        .foregroundColor(.white)
+                        .padding(.top, 60)
+                        .opacity(showZoomHUD ? 1 : 0.6)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
     }
 }
 
